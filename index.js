@@ -381,16 +381,24 @@ async function findItem(key) {
 async function searchItems(query) {
   const live = latestData;
   const results = [];
+  const seen = new Set();
   if (live?.stock) {
     for (const cat of live.stock) {
       for (const it of cat.items) {
-        if (it.key.toLowerCase().includes(query) || it.name.toLowerCase().includes(query)) results.push(it.key);
+        if (it.key.toLowerCase().includes(query) || it.name.toLowerCase().includes(query)) {
+          results.push(it.key);
+          seen.add(it.key);
+        }
       }
     }
   }
-  const all = await getAllItems();
-  for (const it of all) {
-    if (!results.includes(it.id) && (it.id.includes(query) || it.slug?.includes(query) || it.name?.toLowerCase().includes(query))) results.push(it.id);
+  if (allItemsCache) {
+    for (const it of allItemsCache) {
+      if (!seen.has(it.id) && (it.id.includes(query) || it.slug?.includes(query) || it.name?.toLowerCase().includes(query))) {
+        results.push(it.id);
+        seen.add(it.id);
+      }
+    }
   }
   return results.slice(0, 25);
 }
@@ -844,11 +852,10 @@ const cmdSub = {
   async autocomplete(i) {
     const f = i.options.getFocused().toLowerCase();
     const keys = await searchItems(f);
-    const all = await getAllItems();
     const items = [];
     for (const k of keys) {
-      const m = all.find(it => it.id === k);
-      if (m) items.push({ name: (m.emoji || '') + ' ' + m.name + ' (' + m.category + ')', value: m.id });
+      const m = itemMap[k] || itemMap[k.toLowerCase()];
+      if (m) items.push({ name: (m.emoji || '') + ' ' + (m.name || k) + ' (' + (m.category || '?') + ')', value: k });
     }
     await i.respond(items.slice(0, 25));
   },
@@ -966,8 +973,7 @@ const cmdSubSell = {
     const set = new Set();
     const items = [];
     if (d?.sell?.entries) for (const e of d.sell.entries) { if (e.name.toLowerCase().includes(f) || e.key.includes(f)) { set.add(e.key); items.push({ name: e.name + ' (\u00D7' + e.multiplier.toFixed(2) + ')', value: e.key }); } }
-    const all = await getAllItems();
-    for (const it of all) { if (!set.has(it.id) && (it.name?.toLowerCase().includes(f) || it.id.includes(f))) items.push({ name: (it.emoji || '') + ' ' + it.name + ' (' + it.category + ')', value: it.id }); }
+    if (allItemsCache) for (const it of allItemsCache) { if (!set.has(it.id) && (it.name?.toLowerCase().includes(f) || it.id.includes(f))) items.push({ name: (it.emoji || '') + ' ' + it.name + ' (' + it.category + ')', value: it.id }); }
     await i.respond(items.slice(0, 25));
   },
   async execute(i) {
@@ -1006,21 +1012,27 @@ const cmdGraph = {
       const f = i.options.getFocused().toLowerCase();
       const live = latestData;
       const results = [];
+      const seen = new Set();
       if (live?.stock) {
         for (const cat of live.stock) {
           for (const it of cat.items) {
-            if (it.key.toLowerCase().includes(f) || it.name.toLowerCase().includes(f)) results.push(it.key);
+            if (it.key.toLowerCase().includes(f) || it.name.toLowerCase().includes(f)) {
+              results.push(it.key);
+              seen.add(it.key);
+            }
           }
         }
       }
       if (allItemsCache) {
         for (const it of allItemsCache) {
-          if (!results.includes(it.id) && (it.id.includes(f) || it.slug?.includes(f) || it.name?.toLowerCase().includes(f))) results.push(it.id);
+          if (!seen.has(it.id) && (it.id.includes(f) || it.slug?.includes(f) || it.name?.toLowerCase().includes(f))) {
+            results.push(it.id);
+            seen.add(it.id);
+          }
         }
       }
-      const all = allItemsCache || [];
       const items = [];
-      for (const k of results) { const m = all.find(it => it.id === k); if (m) items.push({ name: (m.emoji || '') + ' ' + m.name + ' (' + m.category + ')', value: m.id }); }
+      for (const k of results) { const m = itemMap[k] || itemMap[k.toLowerCase()]; if (m) items.push({ name: (m.emoji || '') + ' ' + (m.name || k) + ' (' + (m.category || '?') + ')', value: k }); }
       await i.respond(items.slice(0, 25));
     } catch { await i.respond([]); }
   },
@@ -1202,11 +1214,10 @@ const cmdInfo = {
   async autocomplete(i) {
     const f = i.options.getFocused().toLowerCase();
     const keys = await searchItems(f);
-    const all = await getAllItems();
     const items = [];
     for (const k of keys) {
-      const m = all.find(it => it.id === k);
-      if (m) items.push({ name: (m.emoji || '') + ' ' + m.name + ' (' + m.category + ')', value: m.id });
+      const m = itemMap[k] || itemMap[k.toLowerCase()];
+      if (m) items.push({ name: (m.emoji || '') + ' ' + (m.name || k) + ' (' + (m.category || '?') + ')', value: k });
     }
     await i.respond(items.slice(0, 25));
   },
@@ -1251,11 +1262,10 @@ const cmdCompare = {
   async autocomplete(i) {
     const f = i.options.getFocused().toLowerCase();
     const keys = await searchItems(f);
-    const all = await getAllItems();
     const items = [];
     for (const k of keys) {
-      const m = all.find(it => it.id === k);
-      if (m) items.push({ name: (m.emoji || '') + ' ' + m.name + ' (' + m.category + ')', value: m.id });
+      const m = itemMap[k] || itemMap[k.toLowerCase()];
+      if (m) items.push({ name: (m.emoji || '') + ' ' + (m.name || k) + ' (' + (m.category || '?') + ')', value: k });
     }
     await i.respond(items.slice(0, 25));
   },
@@ -1281,9 +1291,8 @@ const cmdWish = {
   async autocomplete(i) {
     const f = i.options.getFocused().toLowerCase();
     const keys = await searchItems(f);
-    const all = await getAllItems();
     const items = [];
-    for (const k of keys) { const m = all.find(it => it.id === k); if (m) items.push({ name: (m.emoji || '') + ' ' + m.name + ' (' + m.category + ')', value: m.id }); }
+    for (const k of keys) { const m = itemMap[k] || itemMap[k.toLowerCase()]; if (m) items.push({ name: (m.emoji || '') + ' ' + (m.name || k) + ' (' + (m.category || '?') + ')', value: k }); }
     await i.respond(items.slice(0, 25));
   },
   async execute(i) {
