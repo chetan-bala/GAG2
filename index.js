@@ -245,7 +245,7 @@ function fetchStock() {
   });
 }
 
-function rebuildItemMap(data) {
+function rebuildItemMap(data, allCache) {
   const map = {};
   if (data?.stock) {
     for (const cat of data.stock) {
@@ -256,7 +256,29 @@ function rebuildItemMap(data) {
       }
     }
   }
+  if (allCache) {
+    for (const it of allCache) {
+      if (!map[it.id]) {
+        map[it.id] = { key: it.id, name: it.name, rarity: it.rarity, emoji: it.emoji, category: it.category, value: it.value, stock: 0 };
+        map[it.id.toLowerCase()] = map[it.id];
+        if (it.name) map[it.name.toLowerCase()] = map[it.id];
+        if (it.slug) map[it.slug.toLowerCase()] = map[it.id];
+      }
+    }
+  }
   return map;
+}
+
+function mergeItemMapFromCache() {
+  if (!allItemsCache) return;
+  for (const it of allItemsCache) {
+    if (!itemMap[it.id]) {
+      itemMap[it.id] = { key: it.id, name: it.name, rarity: it.rarity, emoji: it.emoji, category: it.category, value: it.value, stock: 0 };
+      itemMap[it.id.toLowerCase()] = itemMap[it.id];
+      if (it.name) itemMap[it.name.toLowerCase()] = itemMap[it.id];
+      if (it.slug) itemMap[it.slug.toLowerCase()] = itemMap[it.id];
+    }
+  }
 }
 
 // Seed stockHistory with sample data so graphs show something immediately
@@ -292,7 +314,7 @@ async function refreshData() {
       if (Object.keys(previousStock).length === 0) previousStock = buildItemMap(data);
       const changed = JSON.stringify(latestData) !== JSON.stringify(data);
       latestData = data;
-      itemMap = rebuildItemMap(data);
+      itemMap = rebuildItemMap(data, allItemsCache);
       if (changed) {
         for (const cb of dataListeners) cb(data);
       }
@@ -336,6 +358,7 @@ async function getAllItems() {
       ));
       allItemsCache = results.flat();
       allItemsCacheTime = Date.now();
+      mergeItemMapFromCache();
       return allItemsCache;
     })();
   }
@@ -347,14 +370,8 @@ function findItemCached(key) {
 }
 
 async function findItem(key) {
-  const live = latestData;
-  if (live?.stock) {
-    for (const cat of live.stock) {
-      for (const it of cat.items) {
-        if (it.key === key || it.name?.toLowerCase() === key.toLowerCase()) return { ...it, category: cat.category, stock: it.quantity };
-      }
-    }
-  }
+  const cached = findItemCached(key);
+  if (cached) return cached;
   const all = await getAllItems();
   const m = all.find(it => it.id === key || it.slug === key || it.name?.toLowerCase() === key.toLowerCase());
   if (m) return { key: m.id, name: m.name, rarity: m.rarity, emoji: m.emoji, category: m.category, value: m.value, stock: 0 };

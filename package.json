@@ -1,0 +1,19 @@
+{
+  "name": "gag2-stock-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that tracks GAG2 (Grow A Garden 2) live stock and notifies users when items are in stock",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.0",
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0",
+    "mysql2": "^3.12.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
