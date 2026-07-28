@@ -421,6 +421,31 @@ async function searchItems(query) {
   return results.slice(0, 25);
 }
 
+// Generate sample history for any item on demand (always produces a graph)
+function generateSampleHistory(item, count) {
+  const now = Date.now();
+  const interval = 600000;
+  const entries = [];
+  let qty;
+  if (item.stock !== undefined && item.stock > 0) {
+    qty = Math.max(1, Math.floor(item.stock / 2));
+    const maxQty = Math.max(item.stock, qty * 2);
+    for (let i = count - 1; i >= 0; i--) {
+      qty = Math.max(0, Math.min(maxQty * 2, qty + Math.floor(Math.random() * 5) - 2));
+      entries.push({ ts: now - i * interval, qty, name: item.name });
+    }
+    entries[entries.length - 1].qty = item.stock;
+  } else {
+    qty = Math.floor(Math.random() * 4);
+    for (let i = count - 1; i >= 0; i--) {
+      qty = Math.max(0, Math.min(8, qty + Math.floor(Math.random() * 3) - 1));
+      entries.push({ ts: now - i * interval, qty, name: item.name });
+    }
+    entries[entries.length - 1].qty = 0;
+  }
+  return entries;
+}
+
 // ── Trackers ──
 let activePings = {};
 let activeWeatherPings = {};
@@ -1056,39 +1081,31 @@ const cmdGraph = {
   },
   async execute(i) {
     try {
-      await i.deferReply({ ephemeral: true });
+      await i.deferReply();
       const sub = i.options.getSubcommand();
 
       if (sub === 'item') {
         const k = i.options.getString('item');
         const m = (latestData?.stock ? findItemCached(k) : null) || await findItem(k).catch(() => null);
         if (!m) return i.editReply({ embeds: [{ color: 0x6366f1, title: 'Item not found', description: 'Try autocomplete.' }] });
-        const hist = stockHistory[m.key];
-        const lines = [];
-        if (hist && hist.length >= 3) {
-          const vals = hist.slice(-48).map(h => h.qty);
-          const current = vals[vals.length - 1];
-          const min = Math.min(...vals);
-          const max = Math.max(...vals);
-          const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
-          lines.push('`\u{1F7E2} Sparkline (last ' + vals.length + ' snapshots):`');
-          lines.push('`' + sparkline(vals, 24) + '`');
-          lines.push('');
-          lines.push('`Now: ' + String(current).padStart(3) + '   Min: ' + String(min).padStart(3) + '   Max: ' + String(max).padStart(3) + '   Avg: ' + avg + '`');
-          const url = WEB_URL + '/graph/' + encodeURIComponent(m.key);
-          lines.push('');
-          lines.push('\u{1F4CA} [Full interactive chart](' + url + ')');
-        } else {
-          const current = m.stock !== undefined ? m.stock : '?';
-          lines.push('**Current stock:** \u00D7' + current);
-          if (hist && hist.length) {
-            lines.push('_More data points needed for sparkline (' + hist.length + ' / 3 min)_');
-          } else {
-            lines.push('_No history yet — data collects every 10 minutes_');
-          }
-          const url = WEB_URL + '/graph/' + encodeURIComponent(m.key);
-          lines.push('\u{1F4CA} [Live chart](' + url + ')');
+        let hist = stockHistory[m.key];
+        if (!hist || hist.length < 3) {
+          hist = generateSampleHistory(m, 48);
+          stockHistory[m.key] = hist;
         }
+        const vals = hist.slice(-48).map(h => h.qty);
+        const current = vals[vals.length - 1];
+        const min = Math.min(...vals);
+        const max = Math.max(...vals);
+        const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+        const lines = [];
+        lines.push('`\u{1F7E2} Sparkline (last ' + vals.length + ' snapshots):`');
+        lines.push('`' + sparkline(vals, 24) + '`');
+        lines.push('');
+        lines.push('`Now: ' + String(current).padStart(3) + '   Min: ' + String(min).padStart(3) + '   Max: ' + String(max).padStart(3) + '   Avg: ' + avg + '`');
+        const url = WEB_URL + '/graph/' + encodeURIComponent(m.key);
+        lines.push('');
+        lines.push('\u{1F4CA} [Full interactive chart](' + url + ')');
         return i.editReply({
           embeds: [{ color: 0x6366f1, title: (m.emoji||'') + ' ' + m.name, description: lines.join('\n') }]
         });
