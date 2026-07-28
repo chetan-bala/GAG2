@@ -820,8 +820,35 @@ async function updateDashboard(client) {
   }
 }
 
-// ── Chart rendering (unicode charts via embed) ──
+// ── Chart rendering (QuickChart image URLs) ──
+function getChartUrl(type, labels, data, label) {
+  const cfg = {
+    type: type,
+    data: {
+      labels: labels,
+      datasets: [{
+        label: label || 'Value',
+        data: data,
+        borderColor: '#6366f1',
+        backgroundColor: type === 'line' ? 'rgba(99, 102, 241, 0.15)' : '#6366f1',
+        fill: type === 'line',
+        tension: 0.3,
+        borderWidth: 2
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { ticks: { color: '#a1a1aa' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        x: { ticks: { color: '#a1a1aa', maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.05)' } }
+      }
+    }
+  };
+  return 'https://quickchart.io/chart?w=700&h=350&bkg=18181b&c=' + encodeURIComponent(JSON.stringify(cfg));
+}
+
 function sparkline(vals, w) {
+  // Kept for fallback/legacy compatibility
   w = w || 24;
   const max = Math.max(...vals, 1);
   const min = Math.min(...vals, 0);
@@ -829,16 +856,18 @@ function sparkline(vals, w) {
   const chars = ['\u2581','\u2582','\u2583','\u2584','\u2585','\u2586','\u2587','\u2588'];
   return vals.map(v => chars[Math.min(7, Math.floor(((v - min) / range) * 7))]).join('');
 }
+
 function barChart(title, labels, vals, opts) {
   opts = opts || {};
-  const max = Math.max(...vals, 1);
-  const w = opts.barWidth || 14;
-  const lines = [];
-  for (let i = 0; i < labels.length; i++) {
-    const bar = '\u2588'.repeat(Math.round((vals[i] / max) * w));
-    lines.push('`' + labels[i].padEnd(10) + bar.padEnd(w + 1) + vals[i] + '`');
-  }
-  return { embeds: [{ color: opts.color || 0x6366f1, title, description: lines.join('\n'), ...(opts.footer ? { footer: { text: opts.footer } } : {}) }] };
+  const chartUrl = getChartUrl('bar', labels, vals, title);
+  return {
+    embeds: [{
+      color: opts.color || 0x6366f1,
+      title,
+      image: { url: chartUrl },
+      ...(opts.footer ? { footer: { text: opts.footer } } : {})
+    }]
+  };
 }
 function detectRestockDays(itemKey) {
   const hist = stockHistory[itemKey];
@@ -1094,20 +1123,30 @@ const cmdGraph = {
           stockHistory[m.key] = hist;
         }
         const vals = hist.slice(-48).map(h => h.qty);
+        const labels = hist.slice(-48).map((h, idx) => {
+          const d = new Date(h.ts);
+          return isNaN(d.getTime()) ? idx : String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+        });
         const current = vals[vals.length - 1];
         const min = Math.min(...vals);
         const max = Math.max(...vals);
         const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+
+        const chartUrl = getChartUrl('line', labels, vals, (m.name || m.key) + ' Stock');
+
         const lines = [];
-        lines.push('`\u{1F7E2} Sparkline (last ' + vals.length + ' snapshots):`');
-        lines.push('`' + sparkline(vals, 24) + '`');
-        lines.push('');
         lines.push('`Now: ' + String(current).padStart(3) + '   Min: ' + String(min).padStart(3) + '   Max: ' + String(max).padStart(3) + '   Avg: ' + avg + '`');
         const url = WEB_URL + '/graph/' + encodeURIComponent(m.key);
-        lines.push('');
         lines.push('\u{1F4CA} [Full interactive chart](' + url + ')');
+
         return i.editReply({
-          embeds: [{ color: 0x6366f1, title: (m.emoji||'') + ' ' + m.name, description: lines.join('\n') }]
+          embeds: [{
+            color: 0x6366f1,
+            title: (m.emoji||'') + ' ' + (m.name || m.key) + ' Stock History',
+            description: lines.join('\n'),
+            image: { url: chartUrl },
+            timestamp: new Date().toISOString()
+          }]
         });
       } else if (sub === 'frequency') {
         const k = i.options.getString('item');
