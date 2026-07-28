@@ -1152,18 +1152,21 @@ const cmdGraph = {
         const k = i.options.getString('item');
         const m = (latestData?.stock ? findItemCached(k) : null) || await findItem(k);
         if (!m) return i.editReply({ embeds: [{ color: 0x6366f1, title: 'Item not found', description: 'Try autocomplete.' }] });
-        const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
         let counts;
         let source = '';
         try { const [rows] = await q('SELECT ts FROM restock_history WHERE item_key=? AND ts > ?', [m.key, Date.now() - 604800000]);
           if (rows && rows.length) {
             counts = [0,0,0,0,0,0,0];
-            for (const r of rows) { try { const d = new Date(Number(r.ts)); if (!isNaN(d.getTime())) counts[d.getDay()]++; } catch {} }
+            for (const r of rows) { try { const d = new Date(Number(r.ts)); if (!isNaN(d.getTime())) { const dayIdx = (d.getDay() + 6) % 7; counts[dayIdx]++; } } catch {} }
             source = 'DB (' + rows.length + ' events)';
           }
         } catch {}
-        if (!counts) { const d = detectRestockDays(m.key); if (d) { counts = d; source = 'snapshot analysis'; } }
-        if (!counts) return i.editReply(barChart((m.emoji||'') + ' ' + m.name + ' Restocks by Day (sample)', dayNames, [1,3,2,0,4,1,2], { footer: 'Sample — real data collected every 10 min' }));
+        if (!counts) {
+          const d = detectRestockDays(m.key);
+          if (d) { counts = [d[1],d[2],d[3],d[4],d[5],d[6],d[0]]; source = 'snapshot analysis'; }
+        }
+        if (!counts) return i.editReply(barChart((m.emoji||'') + ' ' + m.name + ' Restocks by Day (sample)', dayNames, [2,5,1,4,2,3,1], { footer: 'Sample — real data collected every 10 min' }));
         return i.editReply(barChart((m.emoji||'') + ' ' + m.name + ' Restocks by Day', dayNames, counts, { footer: 'Source: ' + source + ' (7 days)' }));
       } else if (sub === 'sell') {
         const k = i.options.getString('item');
