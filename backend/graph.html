@@ -31,21 +31,17 @@ canvas{width:100%!important;max-height:450px}
   </div>
 </div>
 <script>
-fetch("/api/graph/{{ITEM_KEY}}").then(r=>r.json()).then(d=>{
-  document.getElementById("points").textContent = "Data points: " + (d.labels?.length || 0);
-  if(!d.labels||!d.labels.length){
-    document.querySelector(".chart-wrap").innerHTML += '<div class="error">No data collected yet. Data saves every 15s when stock changes.</div>';
-    return;
-  }
+function showChart(labels, values, isSample) {
+  document.getElementById("points").textContent = isSample ? "Sample data" : (labels?.length + " data points");
   new Chart(document.getElementById("chart"), {
     type: "line",
     data: {
-      labels: d.labels,
+      labels: labels,
       datasets: [{
         label: "Quantity",
-        data: d.values,
-        borderColor: "#818cf8",
-        backgroundColor: "rgba(129,140,248,0.1)",
+        data: values,
+        borderColor: isSample ? "#f97316" : "#818cf8",
+        backgroundColor: isSample ? "rgba(249,115,22,0.08)" : "rgba(129,140,248,0.1)",
         fill: true,
         tension: 0.3,
         pointRadius: 3,
@@ -55,7 +51,10 @@ fetch("/api/graph/{{ITEM_KEY}}").then(r=>r.json()).then(d=>{
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: isSample ? { callbacks: { title: () => "Sample", label: (c) => c.raw + " (example)" } } : undefined
+      },
       scales: {
         x: {
           ticks: { color: "#94a3b8", maxTicksLimit: 15 },
@@ -69,8 +68,21 @@ fetch("/api/graph/{{ITEM_KEY}}").then(r=>r.json()).then(d=>{
       }
     }
   });
+}
+
+fetch("/api/graph/{{ITEM_KEY}}").then(r=>r.json()).then(d=>{
+  if(d.labels&&d.labels.length){
+    document.getElementById("period").textContent = "Real data (last 7 days)";
+    showChart(d.labels, d.values, false);
+  } else {
+    document.getElementById("period").textContent = "Sample data — real data appears once collected";
+    const sampleLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const sampleValues = [3, 5, 2, 6, 4, 1, 3];
+    showChart(sampleLabels, sampleValues, true);
+  }
 }).catch(() => {
-  document.querySelector(".chart-wrap").innerHTML += '<div class="error">Failed to load data.</div>';
+  document.getElementById("period").textContent = "Sample data (API unavailable)";
+  showChart(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], [3, 5, 2, 6, 4, 1, 3], true);
 });
 </script>
 </body>
