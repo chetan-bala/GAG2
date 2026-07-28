@@ -284,24 +284,41 @@ function mergeItemMapFromCache() {
 // Seed stockHistory with sample data so graphs show something immediately
 // Real snapshots (every 10min) gradually replace sample data over ~8 hours
 function seedStockHistory() {
-  const data = latestData;
-  if (!data?.stock) return;
   const now = Date.now();
   const interval = 600000; // 10 min, matching real snapshot interval
   const count = 48; // 8 hours of sample history
-  for (const cat of data.stock) {
-    if (!cat.items) continue;
-    for (const it of cat.items) {
-      if (stockHistory[it.key]?.length) continue;
+
+  // Seed items currently in stock
+  if (latestData?.stock) {
+    for (const cat of latestData.stock) {
+      if (!cat.items) continue;
+      for (const it of cat.items) {
+        if (stockHistory[it.key]?.length) continue;
+        const entries = [];
+        let qty = Math.max(1, Math.floor((it.quantity || 1) / 2));
+        const maxQty = Math.max(it.quantity || 1, qty * 2);
+        for (let i = count - 1; i >= 0; i--) {
+          qty = Math.max(0, Math.min(maxQty * 2, qty + Math.floor(Math.random() * 5) - 2));
+          entries.push({ ts: now - i * interval, qty, name: it.name });
+        }
+        entries[entries.length - 1].qty = it.quantity;
+        stockHistory[it.key] = entries;
+      }
+    }
+  }
+
+  // Seed items from allItemsCache that aren't in current stock
+  if (allItemsCache) {
+    for (const it of allItemsCache) {
+      if (stockHistory[it.id]?.length) continue;
       const entries = [];
-      let qty = Math.max(1, Math.floor((it.quantity || 1) / 2));
-      const maxQty = Math.max(it.quantity || 1, qty * 2);
+      let qty = Math.floor(Math.random() * 4);
       for (let i = count - 1; i >= 0; i--) {
-        qty = Math.max(0, Math.min(maxQty * 2, qty + Math.floor(Math.random() * 5) - 2));
+        qty = Math.max(0, Math.min(8, qty + Math.floor(Math.random() * 3) - 1));
         entries.push({ ts: now - i * interval, qty, name: it.name });
       }
-      entries[entries.length - 1].qty = it.quantity;
-      stockHistory[it.key] = entries;
+      entries[entries.length - 1].qty = 0;
+      stockHistory[it.id] = entries;
     }
   }
 }
@@ -359,6 +376,7 @@ async function getAllItems() {
       allItemsCache = results.flat();
       allItemsCacheTime = Date.now();
       mergeItemMapFromCache();
+      seedStockHistory();
       return allItemsCache;
     })();
   }
