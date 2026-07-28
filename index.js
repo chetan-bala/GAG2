@@ -1155,7 +1155,11 @@ const cmdGraph = {
         const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
         let counts;
         let source = '';
-        try { const [rows] = await q('SELECT ts FROM restock_history WHERE item_key=? AND ts > ?', [m.key, Date.now() - 604800000]);
+        try {
+          const [rows] = await Promise.race([
+            q('SELECT ts FROM restock_history WHERE item_key=? AND ts > ?', [m.key, Date.now() - 604800000]),
+            new Promise((_, r) => setTimeout(r, 2000, new Error('timeout')))
+          ]);
           if (rows && rows.length) {
             counts = [0,0,0,0,0,0,0];
             for (const r of rows) { try { const d = new Date(Number(r.ts)); if (!isNaN(d.getTime())) { const dayIdx = (d.getDay() + 6) % 7; counts[dayIdx]++; } } catch {} }
@@ -1173,14 +1177,26 @@ const cmdGraph = {
         const m = (latestData?.stock ? findItemCached(k) : null) || await findItem(k);
         const key = m ? m.key : k.toLowerCase().trim();
         let rows;
-        try { [rows] = await q('SELECT multiplier, ts FROM sell_history WHERE item_key=? AND ts > ? ORDER BY ts ASC LIMIT 30', [key, Date.now() - 604800000]); } catch { rows = []; }
+        try {
+          const [res] = await Promise.race([
+            q('SELECT multiplier, ts FROM sell_history WHERE item_key=? AND ts > ? ORDER BY ts ASC LIMIT 30', [key, Date.now() - 604800000]),
+            new Promise((_, r) => setTimeout(r, 2000, new Error('timeout')))
+          ]);
+          rows = res;
+        } catch { rows = []; }
         if (!rows || !rows.length) return i.editReply(barChart('\u{1F4B0} ' + (m?.name||key) + ' Sell Multiplier (sample)', ['Mon','Tue','Wed','Thu','Fri'], [1.2, 2.5, 3.0, 1.8, 4.2], { footer: 'Sample — data collected on changes' }));
         const labels = rows.map(r => { try { const d = new Date(Number(r.ts)); return isNaN(d.getTime()) ? '?' : (d.getMonth()+1)+'/'+d.getDate(); } catch { return '?'; } });
         const vals = rows.map(r => r.multiplier || 0);
         return i.editReply(barChart('\u{1F4B0} ' + (m?.name||key) + ' Sell Multiplier', labels, vals, { footer: 'Last 7 days (' + rows.length + ' entries)' }));
       } else if (sub === 'weather') {
         let rows;
-        try { [rows] = await q('SELECT weather_name, COUNT(*) as cnt FROM weather_history WHERE ts > ? GROUP BY weather_name ORDER BY cnt DESC LIMIT 10', [Date.now() - 604800000]); } catch { rows = []; }
+        try {
+          const [res] = await Promise.race([
+            q('SELECT weather_name, COUNT(*) as cnt FROM weather_history WHERE ts > ? GROUP BY weather_name ORDER BY cnt DESC LIMIT 10', [Date.now() - 604800000]),
+            new Promise((_, r) => setTimeout(r, 2000, new Error('timeout')))
+          ]);
+          rows = res;
+        } catch { rows = []; }
         if (!rows || !rows.length) return i.editReply(barChart('\u{1F326}\uFE0F Weather Frequency (sample)', ['Rain','Clear','Bloodmoon','Starfall'], [4,7,1,2], { barWidth: 12, footer: 'Sample — data collected on changes' }));
         return i.editReply(barChart('\u{1F326}\uFE0F Weather Frequency (7d)', rows.map(r => r.weather_name), rows.map(r => Number(r.cnt)), { barWidth: 12, footer: 'Last 7 days' }));
       } else if (sub === 'stats') {
