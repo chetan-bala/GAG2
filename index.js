@@ -719,16 +719,38 @@ async function updateDashboard(client) {
   }
 }
 
-// ── Chart rendering (simple unicode bar charts via embed) ──
-function chartEmbed(title, labels, values, w) {
-  w = w || 14;
-  const max = Math.max(...values, 1);
+// ── Chart rendering (unicode charts via embed) ──
+function sparkline(vals, w) {
+  w = w || 24;
+  const max = Math.max(...vals, 1);
+  const min = Math.min(...vals, 0);
+  const range = max - min || 1;
+  const chars = ['\u2581','\u2582','\u2583','\u2584','\u2585','\u2586','\u2587','\u2588'];
+  return vals.map(v => chars[Math.min(7, Math.floor(((v - min) / range) * 7))]).join('');
+}
+function barChart(title, labels, vals, opts) {
+  opts = opts || {};
+  const max = Math.max(...vals, 1);
+  const w = opts.barWidth || 14;
   const lines = [];
   for (let i = 0; i < labels.length; i++) {
-    const bar = '\u2588'.repeat(Math.round((values[i] / max) * w));
-    lines.push((labels[i] + ':').padEnd(8) + bar + ' ' + values[i]);
+    const bar = '\u2588'.repeat(Math.round((vals[i] / max) * w));
+    lines.push('`' + labels[i].padEnd(10) + bar.padEnd(w + 1) + vals[i] + '`');
   }
-  return { embeds: [{ color: 0x6366f1, title: title, description: '```\n' + lines.join('\n') + '\n```' }] };
+  return { embeds: [{ color: opts.color || 0x6366f1, title, description: lines.join('\n'), ...(opts.footer ? { footer: { text: opts.footer } } : {}) }] };
+}
+function detectRestockDays(itemKey) {
+  const hist = stockHistory[itemKey];
+  if (!hist || hist.length < 2) return null;
+  const counts = [0,0,0,0,0,0,0];
+  for (let i = 1; i < hist.length; i++) {
+    if (hist[i].qty > hist[i-1].qty) {
+      const d = new Date(hist[i].ts);
+      if (!isNaN(d.getTime())) counts[d.getDay()]++;
+    }
+  }
+  if (counts.every(c => c === 0)) return null;
+  return counts;
 }
 
 // ── Commands ──
@@ -921,16 +943,16 @@ const cmdSell = {
 };
 const cmdGraph = {
   data: new SlashCommandBuilder().setName('graph').setDescription('View charts from historical data')
-    .addSubcommand(s => s.setName('item').setDescription('Restock quantity line chart').addStringOption(o => o.setName('item').setDescription('Item').setRequired(true).setAutocomplete(true)))
+    .addSubcommand(s => s.setName('item').setDescription('Quantity history & live chart').addStringOption(o => o.setName('item').setDescription('Item').setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName('frequency').setDescription('Restocks by day of week').addStringOption(o => o.setName('item').setDescription('Item').setRequired(true).setAutocomplete(true)))
     .addSubcommand(s => s.setName('sell').setDescription('Sell multiplier history').addStringOption(o => o.setName('item').setDescription('Item').setRequired(true).setAutocomplete(true)))
-    .addSubcommand(s => s.setName('weather').setDescription('Weather frequency')),
+    .addSubcommand(s => s.setName('weather').setDescription('Weather frequency'))
+    .addSubcommand(s => s.setName('stats').setDescription('Server restock analytics')),
   async autocomplete(i) {
     try {
       const sub = i.options.getSubcommand();
-      if (!sub || sub === 'weather') return i.respond([]);
+      if (!sub || sub === 'weather' || sub === 'stats') return i.respond([]);
       const f = i.options.getFocused().toLowerCase();
-      // Cache-only: use latestData stock + allItemsCache, never fetch API
       const live = latestData;
       const results = [];
       if (live?.stock) {
@@ -955,65 +977,100 @@ const cmdGraph = {
     try {
       await i.deferReply({ ephemeral: true });
       const sub = i.options.getSubcommand();
-      if (!sub) return i.editReply('Select a subcommand: item, frequency, sell, or weather.');
-
-      function makeChart(title, labels, vals, w) {
-        const ch = chartEmbed(title, labels, vals, w);
-        ch.embeds[0].color = 0x6366f1;
-        return ch;
-      }
-
-      function sampleFor(title, data) {
-        const ch = makeChart(title, data.labels, data.vals, data.w);
-        ch.embeds[0].footer = { text: 'Sample data (real data collected every 10 min)' };
-        return ch;
-      }
 
       if (sub === 'item') {
         const k = i.options.getString('item');
         const m = (latestData?.stock ? findItemCached(k) : null) || await findItem(k).catch(() => null);
         if (!m) return i.editReply({ embeds: [{ color: 0x6366f1, title: 'Item not found', description: 'Try autocomplete.' }] });
-        const url = WEB_URL + '/graph/' + encodeURIComponent(m.key);
+        const hist = stockHistory[m.key];
+        const lines = [];
+        if (hist && hist.length >= 3) {
+          const vals = hist.slice(-48).map(h => h.qty);
+          const current = vals[vals.length - 1];
+          const min = Math.min(...vals);
+          const max = Math.max(...vals);
+          const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+          lines.push('`\u{1F7E2} Sparkline (last ' + vals.length + ' snapshots):`');
+          lines.push('`' + sparkline(vals, 24) + '`');
+          lines.push('');
+          lines.push('`Now: ' + String(current).padStart(3) + '   Min: ' + String(min).padStart(3) + '   Max: ' + String(max).padStart(3) + '   Avg: ' + avg + '`');
+          const url = WEB_URL + '/graph/' + encodeURIComponent(m.key);
+          lines.push('');
+          lines.push('\u{1F4CA} [Full interactive chart](' + url + ')');
+        } else {
+          const current = m.stock !== undefined ? m.stock : '?';
+          lines.push('**Current stock:** \u00D7' + current);
+          if (hist && hist.length) {
+            lines.push('_More data points needed for sparkline (' + hist.length + ' / 3 min)_');
+          } else {
+            lines.push('_No history yet — data collects every 10 minutes_');
+          }
+          const url = WEB_URL + '/graph/' + encodeURIComponent(m.key);
+          lines.push('\u{1F4CA} [Live chart](' + url + ')');
+        }
         return i.editReply({
-          embeds: [{
-            color: 0x6366f1, title: (m.emoji||'') + ' ' + m.name,
-            description: '\u{1F4CA} [View quantity history graph](' + url + ')'
-          }]
+          embeds: [{ color: 0x6366f1, title: (m.emoji||'') + ' ' + m.name, description: lines.join('\n') }]
         });
       } else if (sub === 'frequency') {
         const k = i.options.getString('item');
         const m = (latestData?.stock ? findItemCached(k) : null) || await findItem(k);
         if (!m) return i.editReply({ embeds: [{ color: 0x6366f1, title: 'Item not found', description: 'Try autocomplete.' }] });
-        let rows;
-        try { [rows] = await q('SELECT ts FROM restock_history WHERE item_key=? AND ts > ?', [m.key, Date.now() - 604800000]); } catch { rows = []; }
-        if (!rows || !rows.length) return i.editReply(sampleFor((m.emoji||'')+' '+m.name+' Restocks by Day (sample)', { labels: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], vals: [1,3,2,0,4,1,2] }));
         const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-        const counts = [0,0,0,0,0,0,0];
-        for (const r of rows) { try { const d = new Date(Number(r.ts)); if (!isNaN(d.getTime())) counts[d.getDay()]++; } catch {} }
-        const ch = makeChart((m.emoji||'')+' '+m.name+' Restocks by Day', dayNames, counts);
-        ch.embeds[0].footer = { text: 'Last 7 days' };
-        return i.editReply(ch);
+        let counts;
+        let source = '';
+        try { const [rows] = await q('SELECT ts FROM restock_history WHERE item_key=? AND ts > ?', [m.key, Date.now() - 604800000]);
+          if (rows && rows.length) {
+            counts = [0,0,0,0,0,0,0];
+            for (const r of rows) { try { const d = new Date(Number(r.ts)); if (!isNaN(d.getTime())) counts[d.getDay()]++; } catch {} }
+            source = 'DB (' + rows.length + ' events)';
+          }
+        } catch {}
+        if (!counts) { const d = detectRestockDays(m.key); if (d) { counts = d; source = 'snapshot analysis'; } }
+        if (!counts) return i.editReply(barChart((m.emoji||'') + ' ' + m.name + ' Restocks by Day (sample)', dayNames, [1,3,2,0,4,1,2], { footer: 'Sample — real data collected every 10 min' }));
+        return i.editReply(barChart((m.emoji||'') + ' ' + m.name + ' Restocks by Day', dayNames, counts, { footer: 'Source: ' + source + ' (7 days)' }));
       } else if (sub === 'sell') {
         const k = i.options.getString('item');
         const m = (latestData?.stock ? findItemCached(k) : null) || await findItem(k);
         const key = m ? m.key : k.toLowerCase().trim();
         let rows;
         try { [rows] = await q('SELECT multiplier, ts FROM sell_history WHERE item_key=? AND ts > ? ORDER BY ts ASC LIMIT 30', [key, Date.now() - 604800000]); } catch { rows = []; }
-        if (!rows || !rows.length) return i.editReply(sampleFor('\u{1F4B0} '+(m?.name||key)+' Sell Multiplier (sample)', { labels: ['Mon','Tue','Wed','Thu','Fri'], vals: [1.2, 2.5, 3.0, 1.8, 4.2] }));
+        if (!rows || !rows.length) return i.editReply(barChart('\u{1F4B0} ' + (m?.name||key) + ' Sell Multiplier (sample)', ['Mon','Tue','Wed','Thu','Fri'], [1.2, 2.5, 3.0, 1.8, 4.2], { footer: 'Sample — data collected on changes' }));
         const labels = rows.map(r => { try { const d = new Date(Number(r.ts)); return isNaN(d.getTime()) ? '?' : (d.getMonth()+1)+'/'+d.getDate(); } catch { return '?'; } });
         const vals = rows.map(r => r.multiplier || 0);
-        const ch = makeChart('\u{1F4B0} '+(m?.name||key)+' Sell Multiplier', labels, vals);
-        ch.embeds[0].footer = { text: 'Last 7 days' };
-        return i.editReply(ch);
+        return i.editReply(barChart('\u{1F4B0} ' + (m?.name||key) + ' Sell Multiplier', labels, vals, { footer: 'Last 7 days (' + rows.length + ' entries)' }));
       } else if (sub === 'weather') {
         let rows;
         try { [rows] = await q('SELECT weather_name, COUNT(*) as cnt FROM weather_history WHERE ts > ? GROUP BY weather_name ORDER BY cnt DESC LIMIT 10', [Date.now() - 604800000]); } catch { rows = []; }
-        if (!rows || !rows.length) return i.editReply(sampleFor('\u{1F326}\uFE0F Weather Frequency (sample)', { labels: ['Rain','Clear','Bloodmoon','Starfall'], vals: [4,7,1,2], w: 12 }));
-        const ch = makeChart('\u{1F326}\uFE0F Weather Frequency (7d)', rows.map(r => r.weather_name), rows.map(r => Number(r.cnt)), 12);
-        ch.embeds[0].footer = { text: 'Last 7 days' };
-        return i.editReply(ch);
+        if (!rows || !rows.length) return i.editReply(barChart('\u{1F326}\uFE0F Weather Frequency (sample)', ['Rain','Clear','Bloodmoon','Starfall'], [4,7,1,2], { barWidth: 12, footer: 'Sample — data collected on changes' }));
+        return i.editReply(barChart('\u{1F326}\uFE0F Weather Frequency (7d)', rows.map(r => r.weather_name), rows.map(r => Number(r.cnt)), { barWidth: 12, footer: 'Last 7 days' }));
+      } else if (sub === 'stats') {
+        const data = latestData;
+        const items = data?.stock ? data.stock.reduce((a, c) => a + c.items.length, 0) : 0;
+        const tracked = Object.keys(activePings).length;
+        resetStatsIfNewDay();
+        const topRestocks = Object.entries(restockCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        const topSubs = []; let totalSubs = 0;
+        try {
+          const [rows] = await q('SELECT value, COUNT(*) as cnt FROM subscriptions WHERE type=? AND guild_id=? GROUP BY value ORDER BY cnt DESC LIMIT 10', ['item', i.guild.id]);
+          for (const r of rows) { topSubs.push(r); totalSubs += r.cnt; }
+        } catch {}
+        const lines = [];
+        lines.push('**\u{1F4E6} Current items:** ' + items);
+        lines.push('**\u{1F514} Active pings:** ' + tracked);
+        if (!dbAvailable) lines.push('_DB offline — subscription stats unavailable_');
+        if (topRestocks.length) {
+          lines.push('');
+          lines.push('**\u{26A1} Top restocks today (' + (todayStr || '?') + '):**');
+          for (const [k, v] of topRestocks) lines.push(k + ' \u00D7' + v);
+        } else { lines.push(''); lines.push('No restocks tracked today yet.'); }
+        if (topSubs.length) {
+          lines.push('');
+          lines.push('**\u{1F4E1} Most subscribed items:**');
+          for (const r of topSubs) lines.push(r.value + ' \u2192 ' + r.cnt + ' sub' + (r.cnt > 1 ? 's' : ''));
+        }
+        return i.editReply({ embeds: [{ color: 0x6366f1, title: '\u{1F4CA} Server Analytics', description: lines.join('\n'), footer: { text: 'Data updates every 15s' } }] });
       } else {
-        return i.editReply('Unknown subcommand. Use: item, frequency, sell, or weather.');
+        return i.editReply('Unknown subcommand. Use: item, frequency, sell, weather, or stats.');
       }
     } catch (e) { console.error('[Graph] Error:', e.message); try { await i.editReply({ embeds: [{ color: 0xef4444, title: 'Error', description: 'Error generating graph: ' + e.message }] }); } catch {} }
   }
