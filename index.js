@@ -225,6 +225,8 @@ function parseSellSub(val) {
 // ── Data source (direct from api.gag2.gg) ──
 let latestData = null;
 let dataListeners = [];
+// Fast O(1) item lookup map (rebuilt when latestData changes)
+let itemMap = {};
 // In-memory stock history for graphs (no DB needed)
 const stockHistory = {}; // item_key -> [{ts, qty}, ...]
 const MAX_HISTORY = 1008; // 7 days at 10min intervals
@@ -245,6 +247,19 @@ function fetchStock() {
   });
 }
 
+function rebuildItemMap(data) {
+  const map = {};
+  if (data?.stock) {
+    for (const cat of data.stock) {
+      for (const it of cat.items) {
+        map[it.key] = { ...it, category: cat.category, stock: it.quantity };
+        map[it.key.toLowerCase()] = map[it.key];
+      }
+    }
+  }
+  return map;
+}
+
 async function refreshData() {
   try {
     const data = await fetchStock();
@@ -253,6 +268,7 @@ async function refreshData() {
       if (Object.keys(previousStock).length === 0) previousStock = buildItemMap(data);
       const changed = JSON.stringify(latestData) !== JSON.stringify(data);
       latestData = data;
+      itemMap = rebuildItemMap(data);
       if (changed) {
         for (const cb of dataListeners) cb(data);
       }
@@ -303,14 +319,7 @@ async function getAllItems() {
 }
 
 function findItemCached(key) {
-  const live = latestData;
-  if (!live?.stock) return null;
-  for (const cat of live.stock) {
-    for (const it of cat.items) {
-      if (it.key === key || it.name?.toLowerCase() === key.toLowerCase()) return { ...it, category: cat.category, stock: it.quantity };
-    }
-  }
-  return null;
+  return itemMap[key] || itemMap[key.toLowerCase()] || null;
 }
 
 async function findItem(key) {
@@ -743,7 +752,8 @@ function detectRestockDays(itemKey) {
   const hist = stockHistory[itemKey];
   if (!hist || hist.length < 2) return null;
   const counts = [0,0,0,0,0,0,0];
-  for (let i = 1; i < hist.length; i++) {
+  const start = Math.max(0, hist.length - 336); // only scan last ~3.5 days
+  for (let i = start + 1; i < hist.length; i++) {
     if (hist[i].qty > hist[i-1].qty) {
       const d = new Date(hist[i].ts);
       if (!isNaN(d.getTime())) counts[d.getDay()]++;
@@ -1558,7 +1568,7 @@ client.once('ready', async () => {
   // Fetch immediately, then every 15s
   await refreshData();
   // Pre-cache all items so getAllItems() is instant for first user
-  getAllItems().catch(() => {});
+  await getAllItems().catch(() => {});
   // Periodically refresh item cache in background
   setInterval(() => getAllItems().catch(() => {}), 300000);
   // Stock snapshot every 10 minutes for graph history
