@@ -30,6 +30,10 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_stock_history_time
             ON stock_history(timestamp)
         """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_stock_history_item
+            ON stock_history(item_key)
+        """)
         await db.commit()
 
 async def save_snapshot(raw_data: dict):
@@ -56,6 +60,16 @@ async def get_history(limit: int = 100, skip: int = 0):
         cursor = await db.execute(
             "SELECT * FROM stock_history ORDER BY timestamp DESC LIMIT ? OFFSET ?",
             (limit, skip)
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+async def get_item_history(item_key: str, limit: int = 1008):
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT * FROM stock_history WHERE item_key = ? ORDER BY timestamp DESC LIMIT ?",
+            (item_key, limit)
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]

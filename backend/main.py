@@ -2,14 +2,13 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
-
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from backend.database import init_db, get_history
+from backend.database import init_db, get_history, get_item_history
 from backend.poller import poll_loop
 
 HERE = Path(__file__).parent
@@ -78,6 +77,30 @@ async def get_live():
 async def get_history_endpoint(limit: int = 100, skip: int = 0):
     rows = await get_history(limit, skip)
     return rows
+
+@app.get("/api/graph/{item_key}")
+async def get_item_graph(item_key: str, limit: int = 1008):
+    rows = await get_item_history(item_key, limit)
+    labels = [r["timestamp"][:10] for r in reversed(rows)]
+    values = [r["quantity"] for r in reversed(rows)]
+    return {
+        "labels": labels,
+        "values": values,
+        "item_name": rows[0]["item_name"] if rows else item_key,
+        "item_key": item_key
+    }
+
+@app.get("/graph/{item_key}")
+async def serve_graph_page(item_key: str):
+    name = item_key
+    for cat in latest_data.get("stock", []):
+        for item in cat.get("items", []):
+            if item["key"] == item_key:
+                name = item.get("emoji", "") + " " + item["name"]
+                break
+    html = (HERE / "graph.html").read_text(encoding="utf-8")
+    html = html.replace("{{ITEM_KEY}}", item_key).replace("{{ITEM_NAME}}", name)
+    return HTMLResponse(html)
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):

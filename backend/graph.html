@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ITEM_NAME}} - GAG2 Graph</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0b0d11;color:#e8edf5;font-family:system-ui,sans-serif;min-height:100vh;padding:20px}
+h1{font-size:1.2rem;margin-bottom:16px;color:#818cf8;text-align:center}
+.chart-wrap{background:#13161c;border-radius:12px;padding:16px;max-width:900px;margin:0 auto;border:1px solid #1e2230}
+canvas{width:100%!important;max-height:450px}
+.info{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;justify-content:center}
+.info span{background:#1a1a2e;padding:6px 14px;border-radius:8px;font-size:.85rem;color:#7b8299}
+.error{color:#f87171;text-align:center;padding:40px;font-size:1.1rem}
+.back{display:inline-block;margin-top:16px;padding:8px 20px;background:#0ea5e9;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:.9rem;text-decoration:none}
+.back:hover{background:#0284c7}
+</style>
+</head>
+<body>
+<div class="chart-wrap">
+  <h1>{{ITEM_NAME}}</h1>
+  <canvas id="chart"></canvas>
+  <div class="info">
+    <span id="points">Loading...</span>
+    <span id="period">Last 7 days</span>
+  </div>
+  <div style="text-align:center;margin-top:12px">
+    <a class="back" href="/">Back to Dashboard</a>
+  </div>
+</div>
+<script>
+fetch("/api/graph/{{ITEM_KEY}}").then(r=>r.json()).then(d=>{
+  document.getElementById("points").textContent = "Data points: " + (d.labels?.length || 0);
+  if(!d.labels||!d.labels.length){
+    document.querySelector(".chart-wrap").innerHTML += '<div class="error">No data collected yet. Data saves every 15s when stock changes.</div>';
+    return;
+  }
+  new Chart(document.getElementById("chart"), {
+    type: "line",
+    data: {
+      labels: d.labels,
+      datasets: [{
+        label: "Quantity",
+        data: d.values,
+        borderColor: "#818cf8",
+        backgroundColor: "rgba(129,140,248,0.1)",
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+        pointHoverRadius: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: "#94a3b8", maxTicksLimit: 15 },
+          grid: { color: "rgba(148,163,184,0.1)" }
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: "#94a3b8" },
+          grid: { color: "rgba(148,163,184,0.1)" }
+        }
+      }
+    }
+  });
+}).catch(() => {
+  document.querySelector(".chart-wrap").innerHTML += '<div class="error">Failed to load data.</div>';
+});
+</script>
+</body>
+</html>
