@@ -844,7 +844,7 @@ function getChartUrl(type, labels, data, label) {
       }
     }
   };
-  return 'https://quickchart.io/chart?w=700&h=350&bkg=18181b&c=' + encodeURIComponent(JSON.stringify(cfg));
+  return 'https://quickchart.io/chart.png?w=700&h=350&bkg=18181b&c=' + encodeURIComponent(JSON.stringify(cfg));
 }
 
 function sparkline(vals, w) {
