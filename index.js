@@ -27,23 +27,22 @@ const DB_CONFIG = {
   enableKeepAlive: true, keepAliveInitialDelay: 10000,
 };
 let pool;
-let dbAvailable = true; // set to false if MySQL connection fails
+let dbAvailable = false; // starts false — set to true only after initDB confirms connection
 
 async function initDB() {
   pool = mysql.createPool(DB_CONFIG);
   pool.on('error', e => { console.error('[DB] Pool error:', e.message); dbAvailable = false; });
-  // Test connection with short timeout
   try {
     const conn = await Promise.race([
       pool.getConnection(),
-      new Promise((_, r) => setTimeout(r, 4000, new Error('connect timeout')))
+      new Promise((_, r) => setTimeout(r, 2000, new Error('connect timeout')))
     ]);
     conn.release();
   } catch (e) {
     console.error('[DB] Connection failed (' + e.message + ') — running without DB');
-    dbAvailable = false;
     return;
   }
+  dbAvailable = true;
   console.log('[DB] Creating tables...');
   try {
     await q('CREATE TABLE IF NOT EXISTS guild_config (guild_id VARCHAR(64) PRIMARY KEY, channel_id VARCHAR(64))');
@@ -57,12 +56,11 @@ async function initDB() {
     try { await q('ALTER TABLE restock_history ADD INDEX idx_item_ts (item_key, ts)'); } catch {}
     try { await q('ALTER TABLE sell_history ADD INDEX idx_item_ts (item_key, ts)'); } catch {}
     try { await q('ALTER TABLE weather_history ADD INDEX idx_type_ts (weather_type, ts)'); } catch {}
+    console.log('[DB] Pool ready');
   } catch (e) {
     console.error('[DB] Table creation failed:', e.message);
     dbAvailable = false;
-    return;
   }
-  console.log('[DB] Pool ready');
 }
 
 async function q(sql, params) {
@@ -254,6 +252,7 @@ function rebuildItemMap(data) {
       for (const it of cat.items) {
         map[it.key] = { ...it, category: cat.category, stock: it.quantity };
         map[it.key.toLowerCase()] = map[it.key];
+        if (it.name) map[it.name.toLowerCase()] = map[it.key];
       }
     }
   }
@@ -1587,16 +1586,16 @@ async function doDeploy(client) {
 
 client.once('ready', async () => {
   console.log('Logged in as ' + client.user.tag);
-  // Deploy commands (retry once if fails)
-  const deployed = await doDeploy(client);
-  if (!deployed) { setTimeout(async () => { console.log('[Deploy] Retrying...'); await doDeploy(client); }, 10000); }
-  // Fetch immediately, then every 15s
-  await refreshData();
-  // Seed stockHistory with sample data so graphs work from minute 1
+  // Run deploy and data fetch in parallel
+  const [deployed] = await Promise.all([
+    doDeploy(client).catch(() => false),
+    refreshData()
+  ]);
+  // Seed stockHistory immediately so graphs work from second 1
   seedStockHistory();
-  // Pre-cache all items so getAllItems() is instant for first user
-  await getAllItems().catch(() => {});
-  // Periodically refresh item cache in background
+  if (!deployed) { doDeploy(client).catch(() => {}); }
+  // Pre-cache items in background (not awaited — cache fills asap)
+  getAllItems().catch(() => {});
   setInterval(() => getAllItems().catch(() => {}), 300000);
   // Stock snapshot every 10 minutes for graph history
   setInterval(() => {
@@ -1673,8 +1672,6 @@ process.on('unhandledRejection', (reason, p) => { console.error('[CRASH] Unhandl
 process.on('uncaughtException', err => { console.error('[CRASH] Uncaught Exception:', err.message); });
 client.on('error', err => { console.error('[Client] Error:', err.message); });
 
-// ── Web server for live charts ──
-(async () => {
-  try { await initDB(); } catch (e) { console.error('[DB] Connection failed:', e.message); }
-  client.login(process.env.DISCORD_TOKEN);
-})();
+// Start DB init in background, login immediately
+initDB().catch(e => console.error('[DB] Init error:', e.message));
+client.login(process.env.DISCORD_TOKEN);
