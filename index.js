@@ -65,8 +65,12 @@ async function initDB() {
 
 async function q(sql, params) {
   if (!dbAvailable) return [[], { affectedRows: 0 }];
-  try { return await Promise.race([pool.execute(sql, params), new Promise((_, r) => setTimeout(r, 8000, new Error('timeout')))]); }
-  catch (e) { console.error('[DB] Error:', e.message); throw e; }
+  try {
+    return await Promise.race([pool.execute(sql, params), new Promise((_, r) => setTimeout(r, 3000, new Error('timeout')))]);
+  } catch (e) {
+    console.error('[DB] Error (' + e.message + '):', sql.slice(0, 60));
+    return [[], { affectedRows: 0 }];
+  }
 }
 
 // In-memory cache (30s TTL) for hot-path queries
